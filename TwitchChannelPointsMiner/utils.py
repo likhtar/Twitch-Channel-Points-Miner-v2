@@ -157,7 +157,8 @@ def internet_connection_available(host="8.8.8.8", port=53, timeout=3):
 
 
 def percentage(a, b):
-    return 0 if a == 0 else int((a / b) * 100)
+    # b can be 0 for drops without a watch requirement (requiredMinutesWatched=0)
+    return 0 if a == 0 or b == 0 else int((a / b) * 100)
 
 
 def create_chunks(lst, n):

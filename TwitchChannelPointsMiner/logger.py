@@ -1,6 +1,5 @@
 import logging
 import os
-import platform
 import queue
 import pytz
 import sys
@@ -92,7 +91,7 @@ class LoggerSettings:
         console_username: bool = False,
         time_zone: str or None = None,
         file_level: int = logging.DEBUG,
-        emoji: bool = platform.system() != "Windows",
+        emoji: bool = False,  # emoji breaks the Windows console, disabled by default
         colored: bool = False,
         color_palette: ColorPalette = ColorPalette(),
         auto_clear: bool = True,

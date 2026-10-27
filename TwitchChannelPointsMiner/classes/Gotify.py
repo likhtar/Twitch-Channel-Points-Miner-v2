@@ -20,4 +20,5 @@ class Gotify(object):
                     "message": dedent(message),
                     "priority": self.priority
                 },
+                timeout=10,
             )

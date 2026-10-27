@@ -62,6 +62,8 @@ class TwitchChannelPointsMiner:
         "events_predictions",
         "minute_watcher_thread",
         "sync_campaigns_thread",
+        "watchdog_thread",
+        "last_heartbeat",
         "ws_pool",
         "session_id",
         "running",
@@ -146,6 +148,8 @@ class TwitchChannelPointsMiner:
         self.events_predictions = {}
         self.minute_watcher_thread = None
         self.sync_campaigns_thread = None
+        self.watchdog_thread = None
+        self.last_heartbeat = time.time()
         self.ws_pool = None
 
         self.session_id = str(uuid.uuid4())
@@ -225,6 +229,14 @@ class TwitchChannelPointsMiner:
             )
             self.running = True
             self.start_datetime = datetime.now()
+            self.last_heartbeat = time.time()
+
+            # Hard safety net against hangs (e.g. a requests call without timeout)
+            self.watchdog_thread = threading.Thread(
+                target=self.__watchdog, daemon=True
+            )
+            self.watchdog_thread.name = "Watchdog"
+            self.watchdog_thread.start()
 
             self.twitch.login()
 
@@ -293,6 +305,7 @@ class TwitchChannelPointsMiner:
             # 2. Check if streamers are online
             # 3. DEACTIVATED: Check if the user is a moderator. (was used before the 5th of April 2021 to deactivate predictions)
             for streamer in self.streamers:
+                self.last_heartbeat = time.time()
                 time.sleep(random.uniform(0.3, 0.7))
                 try:
                     self.twitch.load_channel_points_context(streamer)
@@ -390,6 +403,7 @@ class TwitchChannelPointsMiner:
 
             refresh_context = time.time()
             while self.running:
+                self.last_heartbeat = time.time()
                 time.sleep(random.uniform(20, 60))
                 # Do an external control for WebSocket. Check if the thread is running
                 # Check if is not None because maybe we have already created a new connection on array+1 and now index is None
@@ -411,6 +425,29 @@ class TwitchChannelPointsMiner:
                             self.twitch.load_channel_points_context(
                                 self.streamers[index]
                             )
+
+    def __watchdog(self, timeout=600):
+        # Hard safety net: if the main loop stops updating last_heartbeat
+        # (e.g. a requests call without a timeout hangs) or a worker thread
+        # died, kill the process so systemd can restart it.
+        while self.running:
+            time.sleep(30)
+            stalled = (time.time() - self.last_heartbeat) > timeout
+            workers_dead = (
+                self.minute_watcher_thread is not None
+                and not self.minute_watcher_thread.is_alive()
+            ) or (
+                self.sync_campaigns_thread is not None
+                and not self.sync_campaigns_thread.is_alive()
+            )
+            if stalled or workers_dead:
+                logger.error(
+                    "Watchdog: miner is stuck "
+                    f"(stalled={stalled}, workers_dead={workers_dead}), "
+                    "exiting so systemd can restart it"
+                )
+                time.sleep(2)  # let the logging queue flush
+                os._exit(1)
 
     def end(self, signum, frame):
         if not self.running:

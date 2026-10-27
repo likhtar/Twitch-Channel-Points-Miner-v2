@@ -141,13 +141,14 @@ class Twitch(object):
             headers = {"User-Agent": USER_AGENTS["Linux"]["FIREFOX"]}
 
             main_page_request = requests.get(
-                streamer.streamer_url, headers=headers)
+                streamer.streamer_url, headers=headers, timeout=20)
             response = main_page_request.text
             # logger.info(response)
             regex_settings = "(https://static.twitchcdn.net/config/settings.*?js|https://assets.twitch.tv/config/settings.*?.js)"
             settings_url = re.search(regex_settings, response).group(1)
 
-            settings_request = requests.get(settings_url, headers=headers)
+            settings_request = requests.get(
+                settings_url, headers=headers, timeout=20)
             response = settings_request.text
             regex_spade = '"spade_url":"(.*?)"'
             streamer.stream.spade_url = re.search(
@@ -287,6 +288,9 @@ class Twitch(object):
                     "User-Agent": self.user_agent,
                     "X-Device-Id": self.device_id,
                 },
+                # Without a timeout a silent Twitch/gql connection hangs the
+                # whole miner forever (systemd sees the process as alive)
+                timeout=20,
             )
             logger.debug(
                 f"Data: {json_data}, Status code: {response.status_code}, Content: {response.text}"
@@ -356,7 +360,7 @@ class Twitch(object):
 
     def update_client_version(self):
         try:
-            response = requests.get(URL)
+            response = requests.get(URL, timeout=20)
             if response.status_code != 200:
                 logger.debug(
                     f"Error with update_client_version: {response.status_code}"
@@ -932,8 +936,16 @@ class Twitch(object):
             if inventory["dropCampaignsInProgress"] not in [None, {}]:
                 for campaign in inventory["dropCampaignsInProgress"]:
                     for drop_dict in campaign["timeBasedDrops"]:
-                        drop = Drop(drop_dict)
-                        drop.update(drop_dict["self"])
+                        try:
+                            drop = Drop(drop_dict)
+                            drop.update(drop_dict["self"])
+                        except Exception as e:
+                            # A single malformed drop must not kill the whole miner
+                            logger.warning(
+                                f"Unable to process drop from inventory "
+                                f"({drop_dict.get('name', 'unknown')}): {e}"
+                            )
+                            continue
                         if drop.is_claimable is True:
                             drop.is_claimed = self.claim_drop(drop)
                             time.sleep(random.uniform(5, 10))
